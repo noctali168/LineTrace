@@ -1,3 +1,6 @@
+int state = 0;
+//0:通常 1:障害物回避中
+
 // --- センサピン（アナログ入力） ---
 const int sensorL = 28;
 const int sensorC = 27;
@@ -6,6 +9,17 @@ const int sensorR = 26;
 // --- モータ制御ピン ---
 const int rCCP_Pin = 5, rSEL1_Pin = 11, rSEL2_Pin = 12;
 const int lCCP_Pin = 7, lSEL1_Pin = 8, lSEL2_Pin = 9;
+
+//超音波センサ
+const int TRIG_Pin = 14;
+const int ECHO_Pin = 15;
+const int sound_speed = 340;
+float duration = 0;
+float distance = 0;
+
+//LED
+const int LED1_Pin = 18;
+const int LED2_Pin = 19;
 
 // --- 制御パラメータ ---
 const int default_speed = 60;      // 基本速度
@@ -31,6 +45,9 @@ void setup() {
   pinMode(sensorC, INPUT);
   pinMode(sensorR, INPUT);
 
+  pinMode(TRIG_Pin, OUTPUT);
+  pinMode(ECHO_Pin, INPUT);
+
   pinMode(rCCP_Pin, OUTPUT);
   pinMode(rSEL1_Pin, OUTPUT);
   pinMode(rSEL2_Pin, OUTPUT);
@@ -38,12 +55,20 @@ void setup() {
   pinMode(lSEL1_Pin, OUTPUT);
   pinMode(lSEL2_Pin, OUTPUT);
 
+  pinMode(LED1_Pin, OUTPUT);
+  pinMode(LED2_Pin, OUTPUT);
+
   Serial.begin(9600);
 }
 
 void loop() {
   // センサ読み取り
   readSensors();
+
+  if(distance < 10.0 && state == 0){//障害物検知
+    Serial.println(distance);
+    AvoidObstacles();
+  }
 
   // 誤差計算（中央センサのみ）
   computeError();
@@ -65,12 +90,26 @@ void readSensors() {
   valL = analogRead(sensorL);
   valC = analogRead(sensorC);
   valR = analogRead(sensorR);
+
+  //超音波センサ
+  digitalWrite(TRIG_Pin, LOW);
+  delayMicroseconds(1);
+  digitalWrite(TRIG_Pin, HIGH);
+  delayMicroseconds(8);
+  digitalWrite(TRIG_Pin, LOW);
+  duration = pulseIn(ECHO_Pin,HIGH);
+  duration = duration/2;
+  distance = duration*100/1000000*sound_speed;
 }
 
 // --- 誤差計算（中央センサのみ） ---
 void computeError() {
   error = (float)valC - target_val;
   error /= 1000;
+
+  if(state == 1 && error > 0){
+    SetState(0);
+  }
 }
 
 // --- PD制御（スムージングあり） ---
@@ -90,8 +129,23 @@ void computeControl() {
 
 // --- モータ速度設定 ---
 void setMotorSpeed() {
-  float r_speed = default_speed + control;
-  float l_speed = default_speed - control;
+  float r_speed;
+  float l_speed;
+
+  switch(state){
+    case 0:
+      r_speed = default_speed + control;
+      l_speed = default_speed - control;
+      break;
+    case 1:
+      r_speed = default_speed * 1.1;
+      l_speed = default_speed * 0.7;
+      break;
+    default:
+      r_speed;
+      l_speed;
+      break;
+  }
 
   r_speed = constrain(r_speed, 0, 255);
   l_speed = constrain(l_speed, 0, 255);
@@ -105,11 +159,60 @@ void setMotorSpeed() {
   digitalWrite(lSEL2_Pin, LOW);
 }
 
+void AvoidObstacles(){
+  SetState(1);
+
+  analogWrite(lCCP_Pin, default_speed);
+  digitalWrite(lSEL1_Pin, HIGH);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  analogWrite(rCCP_Pin, 0);
+  digitalWrite(rSEL1_Pin, LOW);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  delay(1500);
+}
+
+void LEDControll(int num, bool status){
+  if(num == 1){
+    if(status){
+      digitalWrite(LED1_Pin, HIGH);
+    }else{
+      digitalWrite(LED1_Pin, LOW);
+    }
+  }else{
+    if(status){
+      digitalWrite(LED1_Pin, HIGH);
+    }else{
+      digitalWrite(LED1_Pin, LOW);
+    }
+  }
+}
+
+void SetState(int num){ //状態をセット
+  state = num;
+  switch(state){
+    case 0:
+      LEDControll(1, false);
+      LEDControll(2, false);
+      break;
+    case 1:
+      LEDControll(1, true);
+      break;
+    default:
+      LEDControll(1, false);
+      LEDControll(2, false);
+      break;
+  }
+}
+
 // --- デバッグ出力 ---
 void Debug() {
-  Serial.print("L:"); Serial.print(valL);
-  Serial.print(" C:"); Serial.print(valC);
-  Serial.print(" R:"); Serial.print(valR);
-  Serial.print(" | Error:"); Serial.print(error, 3);
-  Serial.print(" | Control:"); Serial.println(control, 3);
+  // Serial.print("L:"); Serial.print(valL);
+  // Serial.print(" C:"); Serial.print(valC);
+  // Serial.print(" R:"); Serial.print(valR);
+  // Serial.print(" | Error:"); Serial.print(error, 3);
+  // Serial.print(" | Control:"); Serial.println(control, 3);
+  // Serial.print("distance: "); Serial.println(distance);
+  // Serial.println(state);
 }
