@@ -9,13 +9,14 @@ const int lCCP_Pin = 7, lSEL1_Pin = 8, lSEL2_Pin = 9;
 
 // --- 制御パラメータ ---
 const int default_speed = 60;      // 基本速度
-const float Kp = 35.0;             // 比例ゲイン（直線補正強化）
-const float Kd = 15.0;             // 微分ゲイン（振動抑制）
+const float Kp = 10.0;             // 比例ゲイン（直線補正強化）
+const float Kd = 20.0;             // 微分ゲイン（振動抑制）
 const float max_control = 25.0;    // 最大速度差
 
 // --- センサ値 ---
 const int white_val = 1000;        // 白
 const int black_val = 3200;        // 黒
+const int target_val = (white_val + black_val) / 2;
 
 // --- PD制御用変数 ---
 float valL, valC, valR;
@@ -25,6 +26,7 @@ float control = 0;
 float prev_control = 0; // スムージング用
 
 void setup() {
+  analogReadResolution(12);
   pinMode(sensorL, INPUT);
   pinMode(sensorC, INPUT);
   pinMode(sensorR, INPUT);
@@ -67,10 +69,8 @@ void readSensors() {
 
 // --- 誤差計算（中央センサのみ） ---
 void computeError() {
-  // -0.5 = 左端, 0 = 中央, +0.5 = 右端
-  float normalized = (float)(valC - white_val) / (black_val - white_val);
-  normalized = constrain(normalized, -0.5, 0.5);  
-  error = -normalized; // 中央がライン上なら error ≈ 0
+  error = (float)valC - target_val;
+  error /= 1000;
 }
 
 // --- PD制御（スムージングあり） ---
@@ -90,8 +90,8 @@ void computeControl() {
 
 // --- モータ速度設定 ---
 void setMotorSpeed() {
-  float r_speed = default_speed - control;
-  float l_speed = default_speed + control;
+  float r_speed = default_speed + control;
+  float l_speed = default_speed - control;
 
   r_speed = constrain(r_speed, 0, 255);
   l_speed = constrain(l_speed, 0, 255);
