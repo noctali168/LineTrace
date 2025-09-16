@@ -1,14 +1,14 @@
 int state = 0;
-//0:通常 1:障害物回避中
+//0:通常 1:障害物回避中 2:直角
 
 // --- センサピン（アナログ入力） ---
-const int sensorL = 28;
+const int sensorR = 28;
 const int sensorC = 27;
-const int sensorR = 26;
+const int sensorL = 26;
 
 // --- モータ制御ピン ---
-const int rCCP_Pin = 5, rSEL1_Pin = 11, rSEL2_Pin = 12;
-const int lCCP_Pin = 7, lSEL1_Pin = 8, lSEL2_Pin = 9;
+const int lCCP_Pin = 5, lSEL1_Pin = 11, lSEL2_Pin = 12;
+const int rCCP_Pin = 7, rSEL1_Pin = 8, rSEL2_Pin = 9;
 
 //超音波センサ
 const int TRIG_Pin = 14;
@@ -67,7 +67,11 @@ void loop() {
 
   if(distance < 10.0 && state == 0){//障害物検知
     Serial.println(distance);
-    AvoidObstacles();
+    // AvoidObstacles();
+  }
+
+  if(valL > 2500 && valC > 2500){
+    RightAngle();
   }
 
   // 誤差計算（中央センサのみ）
@@ -134,16 +138,16 @@ void setMotorSpeed() {
 
   switch(state){
     case 0:
-      r_speed = default_speed + control;
-      l_speed = default_speed - control;
+      l_speed = default_speed + control;
+      r_speed = default_speed - control;
       break;
     case 1:
-      r_speed = default_speed * 1.1;
-      l_speed = default_speed * 0.7;
+      l_speed = default_speed * 1.1;
+      r_speed = default_speed * 0.7;
       break;
     default:
-      r_speed;
-      l_speed;
+      l_speed = 0;
+      r_speed = 0;
       break;
   }
 
@@ -162,15 +166,32 @@ void setMotorSpeed() {
 void AvoidObstacles(){
   SetState(1);
 
-  analogWrite(lCCP_Pin, default_speed);
+  analogWrite(rCCP_Pin, default_speed);
+  digitalWrite(rSEL1_Pin, HIGH);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  analogWrite(lCCP_Pin, 0);
+  digitalWrite(lSEL1_Pin, LOW);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  delay(1500);
+}
+
+void RightAngle(){
+  SetState(2);
+  Serial.println("RightAngle");
+
+  analogWrite(rCCP_Pin, default_speed);
+  digitalWrite(rSEL1_Pin, HIGH);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  analogWrite(lCCP_Pin, default_speed / 2);
   digitalWrite(lSEL1_Pin, HIGH);
   digitalWrite(lSEL2_Pin, LOW);
 
-  analogWrite(rCCP_Pin, 0);
-  digitalWrite(rSEL1_Pin, LOW);
-  digitalWrite(rSEL2_Pin, LOW);
-
   delay(1500);
+
+  SetState(0);
 }
 
 void LEDControll(int num, bool status){
@@ -182,9 +203,9 @@ void LEDControll(int num, bool status){
     }
   }else{
     if(status){
-      digitalWrite(LED1_Pin, HIGH);
+      digitalWrite(LED2_Pin, HIGH);
     }else{
-      digitalWrite(LED1_Pin, LOW);
+      digitalWrite(LED2_Pin, LOW);
     }
   }
 }
@@ -198,6 +219,11 @@ void SetState(int num){ //状態をセット
       break;
     case 1:
       LEDControll(1, true);
+      LEDControll(2, false);
+      break;
+    case 2:
+      LEDControll(1, false);
+      LEDControll(2, true);
       break;
     default:
       LEDControll(1, false);
@@ -208,11 +234,11 @@ void SetState(int num){ //状態をセット
 
 // --- デバッグ出力 ---
 void Debug() {
-  // Serial.print("L:"); Serial.print(valL);
-  // Serial.print(" C:"); Serial.print(valC);
-  // Serial.print(" R:"); Serial.print(valR);
+  Serial.print("L:"); Serial.print(valL);
+  Serial.print(" C:"); Serial.print(valC);
+  Serial.print(" R:"); Serial.println(valR);
   // Serial.print(" | Error:"); Serial.print(error, 3);
   // Serial.print(" | Control:"); Serial.println(control, 3);
   // Serial.print("distance: "); Serial.println(distance);
-  // Serial.println(state);
+  Serial.println(state);
 }
