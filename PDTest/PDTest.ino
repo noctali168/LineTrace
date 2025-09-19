@@ -71,7 +71,7 @@ void loop() {
   }
 
   if(valL > 2500 && valC > 2500){
-    RightAngle();
+    //RightAngle();
   }
 
   // 誤差計算（中央センサのみ）
@@ -163,7 +163,17 @@ void setMotorSpeed() {
   digitalWrite(lSEL2_Pin, LOW);
 }
 
+void StopMotors(){
+  analogWrite(rCCP_Pin, 0);
+  digitalWrite(rSEL1_Pin, LOW);
+  digitalWrite(rSEL2_Pin, LOW);
+  analogWrite(lCCP_Pin, 0);
+  digitalWrite(lSEL1_Pin, LOW);
+  digitalWrite(lSEL2_Pin, LOW);
+}
+
 void AvoidObstacles(){
+  StopMotors();
   SetState(1);
 
   analogWrite(rCCP_Pin, default_speed);
@@ -178,6 +188,7 @@ void AvoidObstacles(){
 }
 
 void RightAngle(){
+  StopMotors();
   SetState(2);
   Serial.println("RightAngle");
 
