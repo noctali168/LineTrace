@@ -1,5 +1,5 @@
 int state = 0;
-//0:通常 1:障害物回避中 2:直角
+//0:通常 1:障害物回避中 2:直角 3:レーンチェンジ
 
 // --- センサピン（アナログ入力） ---
 const int sensorR = 28;
@@ -65,14 +65,18 @@ void loop() {
   // センサ読み取り
   readSensors();
 
-  if(distance < 10.0 && state == 0){//障害物検知
+  if(distance < 10.0 && state == 0){ //障害物検知
     Serial.println(distance);
     // AvoidObstacles();
   }
 
-  if(valL > 2500 && valC > 2500){
+  if(valL > 2500 && valC > 2500){ //直角
     //RightAngle();
   }
+
+  // if(valR > ){ //レーンチェンジ
+  //   LaneChange();
+  // }
 
   // 誤差計算（中央センサのみ）
   computeError();
@@ -110,9 +114,16 @@ void readSensors() {
 void computeError() {
   error = (float)valC - target_val;
   error /= 1000;
-
-  if(state == 1 && error > 0){
-    SetState(0);
+  
+  switch(state){
+    case 1:
+    case 3: //回避中とレーンチェンジ中に黒を見つけると通常にもどる
+      if(error > 0){
+        SetState(0);
+      }
+      break;
+    default:
+      break;
   }
 }
 
@@ -144,6 +155,10 @@ void setMotorSpeed() {
     case 1:
       l_speed = default_speed * 1.1;
       r_speed = default_speed * 0.7;
+      break;
+    case 3:
+      l_speed = default_speed;
+      r_speed = default_speed;
       break;
     default:
       l_speed = 0;
@@ -205,6 +220,18 @@ void RightAngle(){
   SetState(0);
 }
 
+void LaneChange(){
+  StopMotors();
+
+  analogWrite(lCCP_Pin, default_speed);
+  digitalWrite(lSEL1_Pin, HIGH);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  delay(500);
+
+  SetState(3);
+}
+
 void LEDControll(int num, bool status){
   if(num == 1){
     if(status){
@@ -234,6 +261,10 @@ void SetState(int num){ //状態をセット
       break;
     case 2:
       LEDControll(1, false);
+      LEDControll(2, true);
+      break;
+    case 3:
+      LEDControll(1, true);
       LEDControll(2, true);
       break;
     default:
