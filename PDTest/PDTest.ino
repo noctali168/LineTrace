@@ -39,6 +39,8 @@ float prev_error = 0;
 float control = 0;
 float prev_control = 0; // スムージング用
 
+float timer_laneChange = 0;
+
 void setup() {
   analogReadResolution(12);
   pinMode(sensorL, INPUT);
@@ -59,24 +61,26 @@ void setup() {
   pinMode(LED2_Pin, OUTPUT);
 
   Serial.begin(9600);
+
+  timer_laneChange = millis();
 }
 
 void loop() {
   // センサ読み取り
   readSensors();
 
-  if(distance < 10.0 && state == 0){ //障害物検知
-    Serial.println(distance);
-    // AvoidObstacles();
-  }
+  if(state == 0){
+    if(distance < 10.0){ //障害物検知
+      Serial.println(distance);
+      // AvoidObstacles();
+    }
 
-  if(valL > 2500 && valC > 2500){ //直角
-    //RightAngle();
-  }
+    if(valL > 2500 && valC > 2500){ //直角
+      //RightAngle();
+    }
 
-  // if(valR > ){ //レーンチェンジ
-  //   LaneChange();
-  // }
+    //   LaneChange();
+  }
 
   // 誤差計算（中央センサのみ）
   computeError();
@@ -220,16 +224,25 @@ void RightAngle(){
   SetState(0);
 }
 
+
+
 void LaneChange(){
-  StopMotors();
+  if(valC > target_val){ //センターが黒ならリセット
+    timer_laneChange = millis();
+    return;
+  }
 
-  analogWrite(lCCP_Pin, default_speed);
-  digitalWrite(lSEL1_Pin, HIGH);
-  digitalWrite(lSEL2_Pin, LOW);
+  if((millis() - timer_laneChange) > 1000){ //1秒以上白なら
+    StopMotors();
 
-  delay(500);
+    analogWrite(lCCP_Pin, default_speed);
+    digitalWrite(lSEL1_Pin, HIGH);
+    digitalWrite(lSEL2_Pin, LOW);
 
-  SetState(3);
+    delay(500);
+
+    SetState(3);
+  }
 }
 
 void LEDControll(int num, bool status){
