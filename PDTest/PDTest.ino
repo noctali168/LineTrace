@@ -22,13 +22,16 @@ const int LED1_Pin = 18;
 const int LED2_Pin = 19;
 
 // --- 制御パラメータ ---
-const int default_speed = 60;      // 基本速度
+const int default_speed = 50;      // 基本速度
 const float Kp = 10.0;             // 比例ゲイン（直線補正強化）
 const float Kd = 20.0;             // 微分ゲイン（振動抑制）
 const float max_control = 25.0;    // 最大速度差
 
+const float left_buff = 1.3;
+const float right_buff = 1.0;
+
 // --- センサ値 ---
-const int white_val = 1000;        // 白
+const int white_val = 1100;        // 白
 const int black_val = 3200;        // 黒
 const int target_val = (white_val + black_val) / 2;
 
@@ -70,13 +73,16 @@ void loop() {
   readSensors();
 
   if(state == 0){
-    if(distance < 10.0){ //障害物検知
+    if(distance < 15.0){ //障害物検知
       Serial.println(distance);
-      // AvoidObstacles();
+      AvoidObstacles();
     }
 
     if(valL > 2500 && valC > 2500){ //直角
-      //RightAngle();
+      RightAngle(true);
+    }
+    if(valR > 2500 && valC > 2500){
+      RightAngle(false);
     }
 
     //   LaneChange();
@@ -137,7 +143,7 @@ void computeControl() {
   float raw_control = Kp * error + Kd * diff;
 
   // スムージングで直線の揺れを抑制
-  control = 0.7 * prev_control + 0.3 * raw_control;
+  control = 0.6 * prev_control + 0.4 * raw_control;
 
   // 最大速度差制限
   control = constrain(control, -max_control, max_control);
@@ -153,8 +159,8 @@ void setMotorSpeed() {
 
   switch(state){
     case 0:
-      l_speed = default_speed + control;
-      r_speed = default_speed - control;
+      l_speed = (default_speed - control)*left_buff;
+      r_speed = (default_speed + control)*right_buff;
       break;
     case 1:
       l_speed = default_speed * 1.1;
@@ -206,16 +212,27 @@ void AvoidObstacles(){
   delay(1500);
 }
 
-void RightAngle(){
+void RightAngle(bool isTurnLeft){
+  float right_param;
+  float left_param;
+  if(isTurnLeft){
+    right_param = 1.0;
+    left_param = 2.0;
+  }else{
+    right_param = 2.0;
+    left_param = 1.0 / left_buff;
+  }
+  
+
   StopMotors();
   SetState(2);
   Serial.println("RightAngle");
 
-  analogWrite(rCCP_Pin, default_speed);
+  analogWrite(rCCP_Pin, default_speed / right_param);
   digitalWrite(rSEL1_Pin, HIGH);
   digitalWrite(rSEL2_Pin, LOW);
 
-  analogWrite(lCCP_Pin, default_speed / 2);
+  analogWrite(lCCP_Pin, default_speed / left_param);
   digitalWrite(lSEL1_Pin, HIGH);
   digitalWrite(lSEL2_Pin, LOW);
 
