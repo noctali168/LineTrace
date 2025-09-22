@@ -78,14 +78,14 @@ void loop() {
       AvoidObstacles();
     }
 
-    if(valL > 2500 && valC > 2500){ //直角
+    if(valL > 2500 && valC > 2500){ //直角左
       RightAngle(true);
     }
-    if(valR > 2500 && valC > 2500){
+    if(valR > 2500 && valC > 2500){ //直角右
       RightAngle(false);
     }
 
-    //   LaneChange();
+    // LaneChange(); //レーンチェンジ
   }
 
   // 誤差計算（中央センサのみ）
@@ -167,7 +167,7 @@ void setMotorSpeed() {
       r_speed = default_speed * 0.7;
       break;
     case 3:
-      l_speed = default_speed;
+      l_speed = default_speed * left_buff;
       r_speed = default_speed;
       break;
     default:
@@ -217,7 +217,7 @@ void RightAngle(bool isTurnLeft){
   float left_param;
   if(isTurnLeft){
     right_param = 1.0;
-    left_param = 2.0;
+    left_param = 2.0 / left_buff;
   }else{
     right_param = 2.0;
     left_param = 1.0 / left_buff;
