@@ -1,44 +1,72 @@
-// センサピン（アナログ）
-const int sensorL = 28;
-const int sensorC = 27;
-const int sensorR = 26;
+int state = 0;
+//0:通常 1:障害物回避中 2:直角 3:レーンチェンジ
 
-// 超音波用
+// --- センサピン（アナログ入力） ---
+const int sensorR = 28;
+const int sensorC = 27;
+const int sensorL = 26;
+
+// --- モータ制御ピン ---
+const int lCCP_Pin = 5, lSEL1_Pin = 11, lSEL2_Pin = 12;
+const int rCCP_Pin = 7, rSEL1_Pin = 8, rSEL2_Pin = 9;
+
+//超音波センサ
 const int TRIG_Pin = 14;
 const int ECHO_Pin = 15;
-const int SOKUDO = 340;  // 音速
-int duration = 0;
+const int sound_speed = 340;
+float duration = 0;
+float distance = 0;
 
-// モータ制御ピン
-const int rCCP_Pin = 5, rSEL1_Pin = 11, rSEL2_Pin = 12;
-const int lCCP_Pin = 7, lSEL1_Pin = 8, lSEL2_Pin = 9;
+//LED
+const int LED1_Pin = 18;
+const int LED2_Pin = 19;
 
-//制御パラメータ
-const int default_speed = 60;
-const float Kp = 0.15;
-const float Kd = 1.5;
-const float control_gain = 100.0;//タイヤ速度感度
+// --- 制御パラメータ ---
+const int default_speed = 50;      // 基本速度
+const float Kp = 10.0;             // 比例ゲイン（直線補正強化）
+const float Kd = 20.0;             // 微分ゲイン（振動抑制）
+const float max_control = 25.0;    // 最大速度差
 
-// PD制御用変数
+const float left_buff = 1.3;
+const float right_buff = 1.0;
+
+// --- センサ値 ---
+const int white_val = 1100;        // 白
+const int black_val = 3200;        // 黒
+const int target_val = (white_val + black_val) / 2;
+
+// --- PD制御用変数 ---
 float valL, valC, valR;
 float error = 0;
 float prev_error = 0;
 float control = 0;
+float prev_control = 0; // スムージング用
 
-//回避モード
-bool avoiding = false;
-//はみ出た時のリカバー
-bool recovering = false;
+float timer_laneChange = 0;
 
-unsigned long avoidStartTime = 0;
-const int avoidDuration = 1000; // 回避を継続する時間 [ms]
+//障害物回避用データ形
+struct AvoidParam {
+  float leftScale;
+  float rightScale;
+  int duration;
+};
+AvoidParam avoidTable[] = {
+  {0, 50, 1500},  // 12〜15cm 
+  {0, 60, 1700},  // 9〜12cm 
+  {0, 70, 1900},   // 6〜9cm 
+  {0, 80, 2100}  // 6cm未満
+};
 
-bool grayMode = false;
-bool grayDetected = false;
-
-float dist;//超音波距離
+//データ取得
+  AvoidParam getAvoidParam(float dist) {
+  if(dist < 6) return avoidTable[3];
+  else if(6 <= dist && dist < 9) return avoidTable[2];
+  else if(9 <= dist && dist < 12) return avoidTable[1];
+  else return (12 <= dist && dist < 15) return avoidTable[0];
+};
 
 void setup() {
+  analogReadResolution(12);
   pinMode(sensorL, INPUT);
   pinMode(sensorC, INPUT);
   pinMode(sensorR, INPUT);
@@ -53,60 +81,121 @@ void setup() {
   pinMode(lSEL1_Pin, OUTPUT);
   pinMode(lSEL2_Pin, OUTPUT);
 
+  pinMode(LED1_Pin, OUTPUT);
+  pinMode(LED2_Pin, OUTPUT);
+
   Serial.begin(9600);
+
+  timer_laneChange = millis();
 }
 
 void loop() {
-  dist = Chouonpa(); // 距離取得
-
-  //  障害物回避処理（最優先）
-  if (AvoidMode(dist)) return;
-
   // センサ読み取り
   readSensors();
 
-  // 灰色検知処理
-  if (GrayMode()) return;
+  if(state == 0){
+    if(distance < 15.0){ //障害物検知
+      Serial.println(distance);
+      AvoidObstacles();
+    }
 
-  // ラインロスト復帰処理
-  if (RecoverMode()) return;
+    if(valL > 2500 && valC > 2500){ //直角左
+      RightAngle(true);
+    }
+    if(valR > 2500 && valC > 2500){ //直角右
+      RightAngle(false);
+    }
 
-  // 通常PD制御
-  handlePDControl();
+    // LaneChange(); //レーンチェンジ
+  }
+
+  // 誤差計算（中央センサのみ）
+  computeError();
+
+  // PD制御（スムージングあり）
+  computeControl();
+
+  // モータ制御
+  setMotorSpeed();
+
+  // デバッグ出力
+  Debug();
+
+  delay(10);
 }
 
-//ラインセンサ読み取り
+// --- センサ読み取り ---
 void readSensors() {
   valL = analogRead(sensorL);
   valC = analogRead(sensorC);
   valR = analogRead(sensorR);
+
+  //超音波センサ
+  digitalWrite(TRIG_Pin, LOW);
+  delayMicroseconds(1);
+  digitalWrite(TRIG_Pin, HIGH);
+  delayMicroseconds(8);
+  digitalWrite(TRIG_Pin, LOW);
+  duration = pulseIn(ECHO_Pin,HIGH);
+  duration = duration/2;
+  distance = duration*100/1000000*sound_speed;
 }
 
-// 誤差計算
+// --- 誤差計算（中央センサのみ） ---
 void computeError() {
-  // 白（高値）→ 黒（低値）を反転して黒ほど大きくする
-  float invL = 4095 - valL;
-  float invC =  4095- valC;
-  float invR = 4095 - valR;
-
-  float sum = invL + invC + invR;
-  if (sum == 0) sum = 1;  // ゼロ除算防止
-
-  error = (-1.0 * invL + 0.0 * invC + 1.0 * invR) / sum;
+  error = (float)valC - target_val;
+  error /= 1000;
+  
+  switch(state){
+    case 1:
+    case 3: //回避中とレーンチェンジ中に黒を見つけると通常にもどる
+      if(error > 0){
+        SetState(0);
+      }
+      break;
+    default:
+      break;
+  }
 }
 
-
-// PD制御値計算
+// --- PD制御（スムージングあり） ---
 void computeControl() {
   float diff = error - prev_error;
-  control = Kp * error + Kd * diff;
+  float raw_control = Kp * error + Kd * diff;
+
+  // スムージングで直線の揺れを抑制
+  control = 0.6 * prev_control + 0.4 * raw_control;
+
+  // 最大速度差制限
+  control = constrain(control, -max_control, max_control);
+
   prev_error = error;
+  prev_control = control;
 }
 
-//  モータ速度設定 
+// --- モータ速度設定 ---
 void setMotorSpeed() {
-  float r_speed = default_speed - control * control_gain;
-  float l_speed = default_speed + control * control_gain;
+  float r_speed;
+  float l_speed;
+
+  switch(state){
+    case 0:
+      l_speed = (default_speed - control)*left_buff;
+      r_speed = (default_speed + control)*right_buff;
+      break;
+    case 1:
+      l_speed = default_speed;
+      r_speed = default_speed;
+      break;
+    case 3:
+      l_speed = default_speed * left_buff;
+      r_speed = default_speed;
+      break;
+    default:
+      l_speed = 0;
+      r_speed = 0;
+      break;
+  }
 
   r_speed = constrain(r_speed, 0, 255);
   l_speed = constrain(l_speed, 0, 255);
@@ -116,160 +205,134 @@ void setMotorSpeed() {
   digitalWrite(rSEL2_Pin, LOW);
 
   analogWrite(lCCP_Pin, l_speed);
-  digitalWrite(lSEL1_Pin, LOW);
-  digitalWrite(lSEL2_Pin, HIGH);
-}
-
-// 左に回避旋回（障害物時）
-void avoidLeft() {
-  analogWrite(rCCP_Pin, 100);  // 右タイヤ速め
-  digitalWrite(rSEL1_Pin, HIGH);
-  digitalWrite(rSEL2_Pin, LOW);
-
-  analogWrite(lCCP_Pin, 20);   // 左タイヤ遅め
-  digitalWrite(lSEL1_Pin, LOW);
-  digitalWrite(lSEL2_Pin, HIGH);
-}
-
-
-
-void recover() {
-  analogWrite(rCCP_Pin, 70);
-  digitalWrite(rSEL1_Pin, HIGH);
-  digitalWrite(rSEL2_Pin, LOW);
-  analogWrite(lCCP_Pin, 70);
   digitalWrite(lSEL1_Pin, HIGH);
-  digitalWrite(lSEL2_Pin, LOW);  
+  digitalWrite(lSEL2_Pin, LOW);
 }
 
-//通常運転モード
-void PDControl() {
-  computeError();
-  computeControl();
-  setMotorSpeed();
-  Debug();
-  delay(10);
+void StopMotors(){
+  analogWrite(rCCP_Pin, 0);
+  digitalWrite(rSEL1_Pin, LOW);
+  digitalWrite(rSEL2_Pin, LOW);
+  analogWrite(lCCP_Pin, 0);
+  digitalWrite(lSEL1_Pin, LOW);
+  digitalWrite(lSEL2_Pin, LOW);
 }
 
-bool AvoidMode(float dist) {
-  static unsigned long avoidStartTime = 0;
-  static int phase = 0;  // 0:未開始, 1:左回避, 2:右復帰
+void AvoidObstacles(){
+  StopMotors();
+  SetState(1);
 
-  if (dist > 0 && dist < 20.0 && !avoiding) {
-    avoiding = true;
-    avoidStartTime = millis();
-    phase = 1;
+  AvoidParam p = getAvoidParam(distance); //距離ごとのデータ
+
+  analogWrite(rCCP_Pin, default_speed * p.rightScale);
+  digitalWrite(rSEL1_Pin, HIGH);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  analogWrite(lCCP_Pin, default_speed * p.leftScale);
+  digitalWrite(lSEL1_Pin, HIGH);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  delay(p.duration);
+}
+void RightAngle(bool isTurnLeft){
+  float right_param;
+  float left_param;
+  if(isTurnLeft){
+    right_param = 1.0;
+    left_param = 2.0 / left_buff;
+  }else{
+    right_param = 2.0;
+    left_param = 1.0 / left_buff;
+  }
+  
+
+  StopMotors();
+  SetState(2);
+  Serial.println("RightAngle");
+
+  analogWrite(rCCP_Pin, default_speed / right_param);
+  digitalWrite(rSEL1_Pin, HIGH);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  analogWrite(lCCP_Pin, default_speed / left_param);
+  digitalWrite(lSEL1_Pin, HIGH);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  delay(1500);
+
+  SetState(0);
+}
+
+
+
+void LaneChange(){
+  if(valC > target_val){ //センターが黒ならリセット
+    timer_laneChange = millis();
+    return;
   }
 
-  if (avoiding) {
-    unsigned long elapsed = millis() - avoidStartTime;
+  if((millis() - timer_laneChange) > 1000){ //1秒以上白なら
+    StopMotors();
 
-    if (phase == 1) {
-      // フェーズ1：左に回避（道を外れる）
-      setMotor(100, true, 30, true);
-      if (elapsed > 700) {  // 0.7秒後に復帰フェーズへ
-        phase = 2;
-        avoidStartTime = millis();  // リセット
-      }
+    analogWrite(lCCP_Pin, default_speed);
+    digitalWrite(lSEL1_Pin, HIGH);
+    digitalWrite(lSEL2_Pin, LOW);
+
+    delay(500);
+
+    SetState(3);
+  }
+}
+
+void LEDControll(int num, bool status){
+  if(num == 1){
+    if(status){
+      digitalWrite(LED1_Pin, HIGH);
+    }else{
+      digitalWrite(LED1_Pin, LOW);
     }
-    else if (phase == 2) {
-      // フェーズ2：右旋回してライン復帰を探す
-      setMotor(30, true, 100, true);  // 右旋回
-
-      // ライン復帰 or タイムアウト
-      if (analogRead(sensorC) < 400 || millis() - avoidStartTime > 2000) {
-        avoiding = false;
-        phase = 0;
-      }
+  }else{
+    if(status){
+      digitalWrite(LED2_Pin, HIGH);
+    }else{
+      digitalWrite(LED2_Pin, LOW);
     }
-
-    delay(10);
-    return true;
   }
-
-  return false;
 }
 
-
-//ラインロストモード
-bool RecoverMode() {
-  static unsigned long recoverStartTime = 0;
-
-  if (!recovering && !avoiding && valL > 3500 && valC > 3500 && valR > 3500) {
-    recovering = true;
-    recoverStartTime = millis();
+void SetState(int num){ //状態をセット
+  state = num;
+  switch(state){
+    case 0:
+      LEDControll(1, false);
+      LEDControll(2, false);
+      break;
+    case 1:
+      LEDControll(1, true);
+      LEDControll(2, false);
+      break;
+    case 2:
+      LEDControll(1, false);
+      LEDControll(2, true);
+      break;
+    case 3:
+      LEDControll(1, true);
+      LEDControll(2, true);
+      break;
+    default:
+      LEDControll(1, false);
+      LEDControll(2, false);
+      break;
   }
-
-  if (recovering) {
-    // ゆるく右旋回でライン探す
-    setMotor(90, true, 30, true);  
-
-    if (analogRead(sensorC) < 3000) { // 黒検出で終了
-      recovering = false;
-    }
-    delay(10);
-    return true;
-  }
-
-  return false;
 }
 
-
-
-//グレイレーンチェンジ
-bool GrayMode() {
-  if (!grayMode && valC > 2500 && valC < 3500) {
-    grayMode = true;
-    grayDetected = false;
-
-    // 一瞬だけ右斜めにカーブ
-    setMotor(80, true, 40, true);  
-    delay(300);
-  }
-
-  if (grayMode && !grayDetected) {
-    // 斜め後は直進
-    setMotor(60, true, 60, true);
-
-    if (valC > 2500 && valC < 3500) {
-      grayDetected = true;
-    }
-    delay(10);
-    return true;
-  }
-
-  if (grayMode && grayDetected) {
-    grayMode = false;  // 復帰
-  }
-
-  return grayMode;
-}y
-
-
-// 両輪のスピードと方向を指定する基本関数
-void setMotor(int rSpeed, bool rForward, int lSpeed, bool lForward) {
-  analogWrite(rCCP_Pin, rSpeed);
-  digitalWrite(rSEL1_Pin, rForward);
-  digitalWrite(rSEL2_Pin, !rForward);
-
-  analogWrite(lCCP_Pin, lSpeed);
-  digitalWrite(lSEL1_Pin, lForward);
-  digitalWrite(lSEL2_Pin, !lForward);
-}
-
-// 一定時間動かす（方向転換用など）
-void moveFor(int rSpeed, bool rFwd, int lSpeed, bool lFwd, int durationMs) {
-  setMotor(rSpeed, rFwd, lSpeed, lFwd);
-  delay(durationMs);
-  stopMotors();
-}
-
-//デバッグ出力
+// --- デバッグ出力 ---
 void Debug() {
-  Serial.print(" Dura:"); Serial.print(duration, 3);
   Serial.print("L:"); Serial.print(valL);
   Serial.print(" C:"); Serial.print(valC);
-  Serial.print(" R:"); Serial.print(valR);
-  Serial.print(" Error:"); Serial.print(error, 3);
-  Serial.print(" Control:"); Serial.print(control, 3);
+  Serial.print(" R:"); Serial.println(valR);
+  // Serial.print(" | Error:"); Serial.print(error, 3);
+  // Serial.print(" | Control:"); Serial.println(control, 3);
+  // Serial.print("distance: "); Serial.println(distance);
+  Serial.println(state);
 }
