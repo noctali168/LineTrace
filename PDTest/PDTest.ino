@@ -1,5 +1,5 @@
 int state = 0;
-//0:通常 1:障害物回避中 2:直角 3:レーンチェンジ
+//0:通常 1:障害物回避中 11:回避からレーンに復帰 2:直角 3:レーンチェンジ
 
 // --- センサピン（アナログ入力） ---
 const int sensorR = 28;
@@ -16,6 +16,7 @@ const int ECHO_Pin = 15;
 const int sound_speed = 340;
 float duration = 0;
 float distance = 0;
+bool avoided = false;
 
 //LED
 const int LED1_Pin = 18;
@@ -27,7 +28,7 @@ const float Kp = 10.0;             // 比例ゲイン（直線補正強化）
 const float Kd = 20.0;             // 微分ゲイン（振動抑制）
 const float max_control = 25.0;    // 最大速度差
 
-const float left_buff = 1.3;
+const float left_buff = 1.4;
 const float right_buff = 1.0;
 
 // --- センサ値 ---
@@ -73,14 +74,17 @@ void loop() {
   readSensors();
 
   if(state == 0){
-    if(distance < 15.0){ //障害物検知
+    if(distance < 15.0 && !avoided){ //障害物検知
       Serial.println(distance);
       AvoidObstacles();
     }
 
     if(valL > 2500 && valC > 2500){ //直角左
       RightAngle(true);
+    }else if(valL > 2500){
+      SetState(11);
     }
+
     if(valR > 2500 && valC > 2500){ //直角右
       RightAngle(false);
     }
@@ -127,8 +131,18 @@ void computeError() {
   
   switch(state){
     case 1:
+      if(valL > 2500){ //回避中に左センサが黒を見つけるとレーン復帰開始
+        RightAngle(true);
+        SetState(11);
+      }
+      break;
     case 3: //回避中とレーンチェンジ中に黒を見つけると通常にもどる
       if(error > 0){
+        SetState(0);
+      }
+      break;
+    case 11:
+      if(valC > 2500){
         SetState(0);
       }
       break;
@@ -163,12 +177,16 @@ void setMotorSpeed() {
       r_speed = (default_speed + control)*right_buff;
       break;
     case 1:
-      l_speed = default_speed * 1.1;
-      r_speed = default_speed * 0.7;
+      l_speed = default_speed * left_buff * 1.1;
+      r_speed = default_speed * right_buff * 0.9;
       break;
     case 3:
       l_speed = default_speed * left_buff;
       r_speed = default_speed;
+      break;
+    case 11:
+      l_speed = default_speed * 0.7;
+      r_speed = default_speed * 1.5;
       break;
     default:
       l_speed = 0;
@@ -200,6 +218,7 @@ void StopMotors(){
 void AvoidObstacles(){
   StopMotors();
   SetState(1);
+  avoided = true;
 
   analogWrite(rCCP_Pin, default_speed);
   digitalWrite(rSEL1_Pin, HIGH);
@@ -209,7 +228,21 @@ void AvoidObstacles(){
   digitalWrite(lSEL1_Pin, LOW);
   digitalWrite(lSEL2_Pin, LOW);
 
-  delay(1500);
+  delay(1500); //左を向く
+
+  analogWrite(rCCP_Pin, default_speed * right_buff);
+  digitalWrite(rSEL1_Pin, HIGH);
+  digitalWrite(rSEL2_Pin, LOW);
+
+  analogWrite(lCCP_Pin, default_speed * left_buff);
+  digitalWrite(lSEL1_Pin, HIGH);
+  digitalWrite(lSEL2_Pin, LOW);
+
+  delay(1000); //少し進む
+}
+
+void ReturnLane(){
+
 }
 
 void RightAngle(bool isTurnLeft){
@@ -217,10 +250,10 @@ void RightAngle(bool isTurnLeft){
   float left_param;
   if(isTurnLeft){
     right_param = 1.0;
-    left_param = 2.0 / left_buff;
+    left_param = 3.0 / left_buff;
   }else{
     right_param = 2.0;
-    left_param = 1.0 / left_buff;
+    left_param = 3.0 / left_buff;
   }
   
 
@@ -293,7 +326,7 @@ void SetState(int num){ //状態をセット
       LEDControll(1, false);
       LEDControll(2, true);
       break;
-    case 3:
+    case 11:
       LEDControll(1, true);
       LEDControll(2, true);
       break;
