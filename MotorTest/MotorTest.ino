@@ -27,7 +27,7 @@ void setup() {
 void loop() {
   // 前進
   ledOn();
-  setMotor(100, true, 100, true);
+  setMotor(200, true, 100, true);
   Serial.println("Forward");
   delay(2000);
 
@@ -36,7 +36,7 @@ void loop() {
   delay(1000);
 
   ledOn();
-  setMotor(50, true, 50, true);
+  setMotor(100, true, 50, true);
   Serial.println("Forward");
   delay(2000);
 
@@ -44,15 +44,15 @@ void loop() {
   ledOff();
   delay(1000);
 
-  // 後退
-  ledOn();
-  setMotor(100, false, 100, false);
-  Serial.println("Backward");
-  delay(2000);
+  // // 後退
+  // ledOn();
+  // setMotor(100, false, 100, false);
+  // Serial.println("Backward");
+  // delay(2000);
 
-  stopMotors();
-  ledOff();
-  delay(1000);
+  // stopMotors();
+  // ledOff();
+  // delay(1000);
 
   // 右旋回
   // ledOn();

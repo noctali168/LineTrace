@@ -1,5 +1,6 @@
 int state = 0;
-//0:通常 1:障害物回避中 2:直角 3:レーンチェンジ
+//0:通常 1:障害物回避中 11:回避からレーンに復帰 2:直角 3:レーンチェンジ
+bool isLeft = false;
 
 // --- センサピン（アナログ入力） ---
 const int sensorR = 28;
@@ -16,19 +17,23 @@ const int ECHO_Pin = 15;
 const int sound_speed = 340;
 float duration = 0;
 float distance = 0;
+bool avoided = false;
 
 //LED
 const int LED1_Pin = 18;
 const int LED2_Pin = 19;
 
 // --- 制御パラメータ ---
-const int default_speed = 60;      // 基本速度
+const int default_speed = 50;      // 基本速度
 const float Kp = 10.0;             // 比例ゲイン（直線補正強化）
 const float Kd = 20.0;             // 微分ゲイン（振動抑制）
 const float max_control = 25.0;    // 最大速度差
 
+const float left_buff = 1.4;
+const float right_buff = 1.0;
+
 // --- センサ値 ---
-const int white_val = 1000;        // 白
+const int white_val = 1100;        // 白
 const int black_val = 3200;        // 黒
 const int target_val = (white_val + black_val) / 2;
 
@@ -38,6 +43,8 @@ float error = 0;
 float prev_error = 0;
 float control = 0;
 float prev_control = 0; // スムージング用
+
+float timer_laneChange = 0;
 
 void setup() {
   analogReadResolution(12);
@@ -59,24 +66,33 @@ void setup() {
   pinMode(LED2_Pin, OUTPUT);
 
   Serial.begin(9600);
+
+  timer_laneChange = millis();
 }
 
 void loop() {
   // センサ読み取り
   readSensors();
 
-  if(distance < 10.0 && state == 0){ //障害物検知
-    Serial.println(distance);
-    // AvoidObstacles();
-  }
+  if(state == 0){
+    if(distance < 15.0){ //障害物検知
+      Serial.println(distance);
+      AvoidObstacles();
+    }
 
-  if(valL > 2500 && valC > 2500){ //直角
-    //RightAngle();
-  }
+    if(valL > 2500 && valC > 2500){ //直角左
+      // RightAngle(true);
+    }else if(valL > 2500){
+      if(isLeft || state == 0){
+        SetState(11);
+      }
+    }
 
-  // if(valR > ){ //レーンチェンジ
-  //   LaneChange();
-  // }
+    if(valR > 2500 && valC > 2500){ //直角右
+      RightAngle(false);
+    }
+    // LaneChange(); //レーンチェンジ
+  }
 
   // 誤差計算（中央センサのみ）
   computeError();
@@ -117,8 +133,26 @@ void computeError() {
   
   switch(state){
     case 1:
-    case 3: //回避中とレーンチェンジ中に黒を見つけると通常にもどる
-      if(error > 0){
+      if(isLeft){
+        if(valL > 2500){ //回避中に左センサが黒を見つけるとレーン復帰開始
+          RightAngle(true);
+          SetState(11);
+        }
+      }else{
+        if(valC > 2500){
+          RightAngle(false);
+          SetState(12);
+        }
+      }
+      
+      break;
+    // case 3:
+    //     SetState(0);
+    //   }
+    //   break;
+    case 11:
+    case 12:
+      if(valC > 2500){
         SetState(0);
       }
       break;
@@ -133,7 +167,7 @@ void computeControl() {
   float raw_control = Kp * error + Kd * diff;
 
   // スムージングで直線の揺れを抑制
-  control = 0.7 * prev_control + 0.3 * raw_control;
+  control = 0.6 * prev_control + 0.4 * raw_control;
 
   // 最大速度差制限
   control = constrain(control, -max_control, max_control);
@@ -149,16 +183,29 @@ void setMotorSpeed() {
 
   switch(state){
     case 0:
-      l_speed = default_speed + control;
-      r_speed = default_speed - control;
+      l_speed = (default_speed - control)*left_buff;
+      r_speed = (default_speed + control)*right_buff;
       break;
     case 1:
-      l_speed = default_speed * 1.1;
-      r_speed = default_speed * 0.7;
+      if(isLeft){
+        l_speed = default_speed * left_buff * 1.1;
+        r_speed = default_speed * right_buff * 0.9;
+      }else{
+        l_speed = default_speed * left_buff * 0.7;
+        r_speed = default_speed * right_buff * 1.5;
+      }
       break;
     case 3:
-      l_speed = default_speed;
+      l_speed = default_speed * left_buff;
       r_speed = default_speed;
+      break;
+    case 11:
+      l_speed = default_speed * 0.7;
+      r_speed = default_speed * 1.5;
+      break;
+    case 12:
+      l_speed = default_speed * 1.5;
+      r_speed = default_speed * 0.7;
       break;
     default:
       l_speed = 0;
@@ -190,28 +237,61 @@ void StopMotors(){
 void AvoidObstacles(){
   StopMotors();
   SetState(1);
+  avoided = true;
 
-  analogWrite(rCCP_Pin, default_speed);
+  if(isLeft){
+    analogWrite(rCCP_Pin, default_speed);
+    digitalWrite(rSEL1_Pin, HIGH);
+    digitalWrite(rSEL2_Pin, LOW);
+
+    analogWrite(lCCP_Pin, 0);
+    digitalWrite(lSEL1_Pin, LOW);
+    digitalWrite(lSEL2_Pin, LOW);
+  }else{
+    analogWrite(rCCP_Pin, 0);
+    digitalWrite(rSEL1_Pin, LOW);
+    digitalWrite(rSEL2_Pin, LOW);
+
+    analogWrite(lCCP_Pin, default_speed * 1.3);
+    digitalWrite(lSEL1_Pin, HIGH);
+    digitalWrite(lSEL2_Pin, LOW);
+  }
+  
+
+  delay(1500); //内を向く
+
+  analogWrite(rCCP_Pin, default_speed * right_buff);
   digitalWrite(rSEL1_Pin, HIGH);
   digitalWrite(rSEL2_Pin, LOW);
 
-  analogWrite(lCCP_Pin, 0);
-  digitalWrite(lSEL1_Pin, LOW);
+  analogWrite(lCCP_Pin, default_speed * left_buff);
+  digitalWrite(lSEL1_Pin, HIGH);
   digitalWrite(lSEL2_Pin, LOW);
 
-  delay(1500);
+  delay(800); //少し進む
 }
 
-void RightAngle(){
+void RightAngle(bool isTurnLeft){
+  float right_param;
+  float left_param;
+  if(isTurnLeft){
+    right_param = 1.0;
+    left_param = 3.0 / left_buff;
+  }else{
+    right_param = 3.0;
+    left_param = 1.0;
+  }
+  
+
   StopMotors();
   SetState(2);
   Serial.println("RightAngle");
 
-  analogWrite(rCCP_Pin, default_speed);
+  analogWrite(rCCP_Pin, default_speed * right_buff / right_param);
   digitalWrite(rSEL1_Pin, HIGH);
   digitalWrite(rSEL2_Pin, LOW);
 
-  analogWrite(lCCP_Pin, default_speed / 2);
+  analogWrite(lCCP_Pin, default_speed * left_buff / left_param);
   digitalWrite(lSEL1_Pin, HIGH);
   digitalWrite(lSEL2_Pin, LOW);
 
@@ -220,16 +300,25 @@ void RightAngle(){
   SetState(0);
 }
 
+
+
 void LaneChange(){
-  StopMotors();
+  if(valC > target_val){ //センターが黒ならリセット
+    timer_laneChange = millis();
+    return;
+  }
 
-  analogWrite(lCCP_Pin, default_speed);
-  digitalWrite(lSEL1_Pin, HIGH);
-  digitalWrite(lSEL2_Pin, LOW);
+  if((millis() - timer_laneChange) > 1000){ //1秒以上白なら
+    StopMotors();
 
-  delay(500);
+    analogWrite(lCCP_Pin, default_speed);
+    digitalWrite(lSEL1_Pin, HIGH);
+    digitalWrite(lSEL2_Pin, LOW);
 
-  SetState(3);
+    delay(500);
+
+    SetState(3);
+  }
 }
 
 void LEDControll(int num, bool status){
@@ -263,7 +352,8 @@ void SetState(int num){ //状態をセット
       LEDControll(1, false);
       LEDControll(2, true);
       break;
-    case 3:
+    case 11:
+    case 12:
       LEDControll(1, true);
       LEDControll(2, true);
       break;
